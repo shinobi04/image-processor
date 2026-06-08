@@ -1,4 +1,5 @@
 import io
+import asyncio
 import re
 from typing import List
 
@@ -25,12 +26,21 @@ class BlurryImageError(Exception):
     pass
 
 
+def _process_and_ocr(img, filename):
+    """Helper function to run CPU-bound processing and OCR in a separate thread."""
+    pil_page = process_single_image(img)
+    text = pytesseract.image_to_string(pil_page).strip()
+    if not text:
+        raise BlurryImageError(f"Image or page from {filename} is blurry or contains no readable text.")
+    return pil_page
+
+
 async def process_files_to_pdf(files: List[UploadFile]) -> bytes:
     """Process a list of UploadFile objects and return a single PDF (bytes).
 
     The original upload order is preserved. PDFs are expanded page-by-page.
     """
-    processed_pages = []  # list of PIL.Image (mode 'L')
+    raw_images_to_process = []  # list of tuples: (np.ndarray, filename)
 
     for upload in files:
         filename = upload.filename or ""
@@ -61,11 +71,7 @@ async def process_files_to_pdf(files: List[UploadFile]) -> bytes:
                 raise CorruptFileError()
 
             for img in page_images:
-                pil_page = process_single_image(img)
-                text = pytesseract.image_to_string(pil_page).strip()
-                if not text:
-                    raise BlurryImageError(f"File {filename} contains a blurry page or no readable text.")
-                processed_pages.append(pil_page)
+                raw_images_to_process.append((img, filename))
 
         elif is_image:
             try:
@@ -73,16 +79,22 @@ async def process_files_to_pdf(files: List[UploadFile]) -> bytes:
             except Exception:
                 raise CorruptFileError()
 
-            pil_page = process_single_image(img)
-            text = pytesseract.image_to_string(pil_page).strip()
-            if not text:
-                raise BlurryImageError(f"Image {filename} is blurry or contains no readable text.")
-            processed_pages.append(pil_page)
+            raw_images_to_process.append((img, filename))
         else:
             raise UnsupportedFileTypeError()
 
-    if not processed_pages:
+    if not raw_images_to_process:
         raise CorruptFileError()
+
+    # Process images concurrently in batches of 15 to control memory usage
+    processed_pages = []
+    batch_size = 15
+    for i in range(0, len(raw_images_to_process), batch_size):
+        batch = raw_images_to_process[i:i + batch_size]
+        tasks = [asyncio.to_thread(_process_and_ocr, img, fname) for img, fname in batch]
+        # Await the batch; gather preserves the original order
+        results = await asyncio.gather(*tasks)
+        processed_pages.extend(results)
 
     # Convert processed PIL images to PDF using img2pdf (expects binary file-like objects)
     import img2pdf

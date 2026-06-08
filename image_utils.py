@@ -333,7 +333,6 @@ def process_single_image(image_bgr: np.ndarray) -> Image.Image:
         pil_clean = Image.fromarray(clean_for_osd)
         
         osd = pytesseract.image_to_osd(pil_clean)
-        osd = pytesseract.image_to_osd(pil_clean)
         rotation, _ = _parse_osd_rotation(osd)
     except Exception as e:
         import traceback
@@ -353,9 +352,9 @@ def process_single_image(image_bgr: np.ndarray) -> Image.Image:
             pass
 
 
-    # Step 5: denoising
+    # Step 5: denoising (using ultra-fast median blur instead of slow NlMeans)
     try:
-        denoised = cv2.fastNlMeansDenoising(gray, None, h=10)
+        denoised = cv2.medianBlur(gray, 3)
     except Exception:
         denoised = gray
 
