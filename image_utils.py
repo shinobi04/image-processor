@@ -342,15 +342,16 @@ def process_single_image(image_bgr: np.ndarray) -> Image.Image:
     except Exception:
         rotation, rot_conf = 0, 0.0
 
-    # Apply OSD rotation only if confidence is reasonably high
-    if rotation and rotation % 360 != 0 and rot_conf >= 30.0:
-        try:
-            pil_gray = pil_gray.rotate(-rotation, expand=True)
-            gray = np.array(pil_gray)
-        except Exception:
-            pass
+    # Trust OSD if confidence is high, even if it suggests 0 rotation.
+    if rot_conf >= 30.0:
+        if rotation and rotation % 360 != 0:
+            try:
+                pil_gray = pil_gray.rotate(-rotation, expand=True)
+                gray = np.array(pil_gray)
+            except Exception:
+                pass
     else:
-        # Either OSD suggested no rotation or confidence is low: use OCR-based selection
+        # Confidence is low: use OCR-based selection fallback
         try:
             ocr_choice = _choose_rotation_by_ocr(pil_gray)
             if ocr_choice and ocr_choice % 360 != 0:
