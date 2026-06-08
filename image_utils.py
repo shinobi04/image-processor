@@ -127,15 +127,20 @@ def _get_tight_content_bbox(gray: np.ndarray, min_area: int = 1000, margin: int 
     h, w = gray.shape[:2]
 
     # OpenCV-based approach: adaptive threshold + morphological grouping of text
-    bs = 15 if max(h, w) > 200 else 11
+    # Use dynamic block size for adaptive threshold to handle thick fonts in high-res images
+    bs = int(max(h, w) / 50)
+    if bs % 2 == 0:
+        bs += 1
+    bs = max(15, bs)
+    
     try:
-        thr = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, bs, 10)
+        thr = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, bs, 5)
     except Exception:
         _, thr = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
-    # Morph to join text into blocks
-    kx = max(3, int(w / 200))
-    ky = max(3, int(h / 200))
+    # Morph to join text into blocks (increase kernel to group headers separated by large gaps)
+    kx = max(5, int(w / 100))
+    ky = max(5, int(h / 100))
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kx, ky))
     morph = cv2.dilate(thr, kernel, iterations=2)
 
