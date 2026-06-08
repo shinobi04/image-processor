@@ -5,8 +5,6 @@ opencv-python-headless
 numpy
 Pillow
 pillow-heif
-pymupdf
+PyMuPDF
 img2pdf
 pytesseract
-scikit-image
-scikit-learn
