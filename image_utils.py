@@ -197,7 +197,7 @@ def _choose_rotation_by_ocr(pil_img: Image.Image, conf_threshold: int = 40) -> i
         cnt = 0
         tot = 0
         for t, c in zip(texts, confs):
-            if not t or len(t) < 3 or not re.search(r"\w", t):
+            if not t or len(t) < 3 or not re.search(r"[A-Za-z]{3,}", t):
                 continue
             try:
                 ic = int(c)
@@ -207,13 +207,8 @@ def _choose_rotation_by_ocr(pil_img: Image.Image, conf_threshold: int = 40) -> i
                 cnt += 1
                 tot += ic
 
-        # Apply a strong bias towards the original orientation (0 degrees).
-        # A rotated image must find at least 1.5x more words to be chosen.
-        score_cnt = cnt if ang == 0 else cnt / 1.5
-        score_tot = tot if ang == 0 else tot / 1.5
-
-        if score_cnt > best[1] or (score_cnt == best[1] and score_tot > best[2]):
-            best = (ang, score_cnt, score_tot)
+        if cnt > best[1] or (cnt == best[1] and tot > best[2]):
+            best = (ang, cnt, tot)
 
     return int(best[0])
 
