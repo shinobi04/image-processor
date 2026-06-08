@@ -234,9 +234,14 @@ def detect_document_corners(image: np.ndarray) -> Optional[np.ndarray]:
 
     for c in contours:
         peri = cv2.arcLength(c, True)
-        approx = cv2.approxPolyDP(c, 0.02 * peri, True)
-        if len(approx) == 4:
-            pts = approx.reshape(4, 2).astype("float32")
+        pts = None
+        for eps_mult in [0.02, 0.03, 0.04, 0.05, 0.07, 0.10]:
+            approx = cv2.approxPolyDP(c, eps_mult * peri, True)
+            if len(approx) == 4:
+                pts = approx.reshape(4, 2).astype("float32")
+                break
+        
+        if pts is not None:
             if resizing:
                 pts = pts / scale
             # area guard: ensure detected quad is large enough
