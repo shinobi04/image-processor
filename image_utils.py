@@ -115,7 +115,7 @@ def _validate_quad_angles(pts: np.ndarray, min_angle: float = 45.0, max_angle: f
     return True
 
 
-def _get_tight_content_bbox(gray: np.ndarray, min_area: int = 1000, margin: Optional[int] = None) -> Optional[Tuple[int, int, int, int]]:
+def _get_tight_content_bbox(gray: np.ndarray, min_area: int = 1000, margin: int = 50) -> Optional[Tuple[int, int, int, int]]:
     """Return a tight bounding box (x,y,w,h) around textual/content regions in a grayscale image.
 
     Uses adaptive thresholding and morphological ops to cluster text into blocks, then
@@ -125,10 +125,6 @@ def _get_tight_content_bbox(gray: np.ndarray, min_area: int = 1000, margin: Opti
         return None
 
     h, w = gray.shape[:2]
-    
-    if margin is None:
-        # Dynamic margin: ~5% of the largest dimension for a comfortable border (fixes edge-to-edge look)
-        margin = max(50, int(max(h, w) * 0.05))
 
     # OpenCV-based approach: adaptive threshold + morphological grouping of text
     # Use dynamic block size for adaptive threshold to handle thick fonts in high-res images
@@ -218,12 +214,9 @@ def _choose_rotation_by_ocr(pil_img: Image.Image, conf_threshold: int = 40) -> i
 
 
 def detect_document_corners(image: np.ndarray) -> Optional[np.ndarray]:
-    """Attempt to find the largest 4-corner contour in the image.
-
-    Returns 4x2 array of float points or None.
+    """Attempt to find the bounding rectangle of the document.
     """
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    # Resize for speed if very large
     h, w = gray.shape
     resizing = False
     scale = 1.0
@@ -235,76 +228,26 @@ def detect_document_corners(image: np.ndarray) -> Optional[np.ndarray]:
     else:
         gray_small = gray
 
-    blur = cv2.GaussianBlur(gray_small, (5, 5), 0)
+    # Morphological approach to find the document mask reliably
+    binary = cv2.adaptiveThreshold(gray_small, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=3)
+    binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
     
-    # Auto-Canny thresholding (based on ocr-anti)
-    median = int(np.median(blur))
-    lower = max(0, int(median * 0.66))
-    upper = min(255, int(median * 1.33))
-    edged = cv2.Canny(blur, lower, upper)
-    
-    # Dilate edges slightly to close small gaps
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-    edged = cv2.dilate(edged, kernel, iterations=1)
-
-    contours, _ = cv2.findContours(edged, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-    contours = sorted(contours, key=cv2.contourArea, reverse=True)[:10]
-
-    for c in contours:
-        area = cv2.contourArea(c)
-        if area < 0.05 * (h * w if not resizing else (h * scale) * (w * scale)):
-            continue
-            
-        # convexHull makes approxPolyDP immune to irregular shapes like fingers/folds
-        hull = cv2.convexHull(c)
-        peri = cv2.arcLength(hull, True)
-        
-        pts = None
-        for eps_mult in [0.02, 0.03, 0.04, 0.05, 0.08]:
-            approx = cv2.approxPolyDP(hull, eps_mult * peri, True)
-            if len(approx) == 4:
-                pts = approx.reshape(4, 2).astype("float32")
-                break
-        
-        if pts is not None:
+    cnts, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if cnts:
+        # Find the largest contour
+        c = max(cnts, key=cv2.contourArea)
+        poly_area = cv2.contourArea(c)
+        if poly_area >= 0.15 * (gray_small.shape[0] * gray_small.shape[1]):
+            # Use minAreaRect to get a perfect mathematical rectangle.
+            # This completely prevents the "free form" perspective stretching 
+            # that occurs when warping from irregular finger/fold points.
+            box = cv2.boxPoints(cv2.minAreaRect(c))
+            pts = np.array(box, dtype="float32")
             if resizing:
                 pts = pts / scale
-            # area guard: ensure detected quad is large enough
-            rect = _order_points(pts)
-            poly_area = 0.5 * np.abs(np.dot(rect[:, 0], np.roll(rect[:, 1], 1)) - np.dot(rect[:, 1], np.roll(rect[:, 0], 1)))
-            if poly_area >= 0.15 * (h * w):
-                return pts
-
-    # Fallback: morphological approach
-    try:
-        small = gray_small if resizing else gray
-        binary = cv2.adaptiveThreshold(small, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=3)
-        binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
-        
-        cnts, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if cnts:
-            cnts = sorted(cnts, key=cv2.contourArea, reverse=True)[:5]
-            for c in cnts:
-                hull = cv2.convexHull(c)
-                peri = cv2.arcLength(hull, True)
-                pts = None
-                for eps_mult in [0.02, 0.03, 0.05, 0.08]:
-                    approx = cv2.approxPolyDP(hull, eps_mult * peri, True)
-                    if len(approx) == 4:
-                        pts = approx.reshape(4, 2).astype("float32")
-                        break
-                
-                if pts is not None:
-                    if resizing:
-                        pts = pts / scale
-                    rect = _order_points(pts)
-                    poly_area = 0.5 * np.abs(np.dot(rect[:, 0], np.roll(rect[:, 1], 1)) - np.dot(rect[:, 1], np.roll(rect[:, 0], 1)))
-                    if poly_area >= 0.15 * (h * w):
-                        return pts
-    except Exception:
-        pass
+            return _order_points(pts)
 
     return None
 
@@ -417,30 +360,26 @@ def process_single_image(image_bgr: np.ndarray) -> Image.Image:
             pass
 
 
-    # Step 5: Flatten Illumination (Scanner Look)
+    # Step 5: denoising
     try:
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
-        bg = cv2.morphologyEx(gray, cv2.MORPH_DILATE, kernel)
-        flat = cv2.divide(gray, bg, scale=255)
+        denoised = cv2.fastNlMeansDenoising(gray, None, h=10)
     except Exception:
-        flat = gray
+        denoised = gray
 
-    # Step 6: Light CLAHE & Noise Reduction
+    # Step 6: CLAHE contrast enhancement
     try:
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        contrast = clahe.apply(flat)
-        denoised = cv2.medianBlur(contrast, 3)
+        contrast = clahe.apply(denoised)
     except Exception:
-        denoised = flat
+        contrast = denoised
 
-    # Step 7: Unsharp masking & Contrast Lift
+    # Step 7: mild sharpening (unsharp mask via addWeighted)
     try:
-        blur = cv2.GaussianBlur(denoised, (0, 0), sigmaX=1.0)
-        sharpened = cv2.addWeighted(denoised, 1.6, blur, -0.6, 0)
-        sharpened = np.clip(sharpened, 0, 255).astype("uint8")
-        final = cv2.convertScaleAbs(sharpened, alpha=1.1, beta=-5)
+        blur = cv2.GaussianBlur(contrast, (0, 0), sigmaX=1.0)
+        sharpened = cv2.addWeighted(contrast, 1.5, blur, -0.5, 0)
+        final = np.clip(sharpened, 0, 255).astype("uint8")
     except Exception:
-        final = denoised
+        final = contrast
 
     # Convert to PIL grayscale image
     # Before finalizing, attempt a tight content crop to remove excess margins
