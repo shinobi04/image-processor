@@ -367,18 +367,24 @@ def process_single_image(image_bgr: np.ndarray) -> Image.Image:
     except Exception:
         denoised = gray
 
-    # Step 6: CLAHE contrast enhancement
+    # Step 6: Strong CLAHE contrast enhancement
     try:
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        # Increased clipLimit from 2.0 to 3.0 for punchier local contrast
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
         contrast = clahe.apply(denoised)
     except Exception:
         contrast = denoised
 
-    # Step 7: mild sharpening (unsharp mask via addWeighted)
+    # Step 7: Strong sharpening and global contrast stretch
     try:
-        blur = cv2.GaussianBlur(contrast, (0, 0), sigmaX=1.0)
-        sharpened = cv2.addWeighted(contrast, 1.5, blur, -0.5, 0)
-        final = np.clip(sharpened, 0, 255).astype("uint8")
+        # Stronger unsharp mask to crisp up text edges
+        blur = cv2.GaussianBlur(contrast, (0, 0), sigmaX=2.0)
+        sharpened = cv2.addWeighted(contrast, 2.0, blur, -1.0, 0)
+        
+        # Global contrast stretch: alpha=1.3 (contrast), beta=-20 (darkens blacks)
+        # This makes the background whiter and the text blacker
+        final = cv2.convertScaleAbs(sharpened, alpha=1.3, beta=-20)
+        final = np.clip(final, 0, 255).astype("uint8")
     except Exception:
         final = contrast
 
