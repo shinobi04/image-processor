@@ -177,41 +177,6 @@ def _get_tight_content_bbox(gray: np.ndarray, min_area: int = 1000, margin: int 
     return (x1, y1, ww, hh)
 
 
-def _choose_rotation_by_ocr(pil_img: Image.Image, conf_threshold: int = 40) -> int:
-    """Try 0/90/180/270 and return the rotation (degrees) that gives the most
-    high-confidence OCR words. We rotate the image by -angle to simulate correcting it.
-    """
-    # Try four candidate orientations
-    candidates = [0, 90, 180, 270]
-    best = (0, -1, -1)  # (angle, count, total_conf)
-
-    for ang in candidates:
-        try:
-            test = pil_img.rotate(-ang, expand=True)
-            data = pytesseract.image_to_data(test, output_type=pytesseract.Output.DICT)
-        except Exception:
-            continue
-
-        texts = data.get("text", [])
-        confs = data.get("conf", [])
-        cnt = 0
-        tot = 0
-        for t, c in zip(texts, confs):
-            if not t or len(t) < 3 or not re.search(r"[A-Za-z]{3,}", t):
-                continue
-            try:
-                ic = int(c)
-            except Exception:
-                continue
-            if ic >= conf_threshold:
-                cnt += 1
-                tot += ic
-
-        if cnt > best[1] or (cnt == best[1] and tot > best[2]):
-            best = (ang, cnt, tot)
-
-    return int(best[0])
-
 
 def detect_document_corners(image: np.ndarray) -> Optional[np.ndarray]:
     """Attempt to find the bounding rectangle of the document.
@@ -331,32 +296,42 @@ def process_single_image(image_bgr: np.ndarray) -> Image.Image:
         # last resort
         gray = np.array(Image.fromarray(warped).convert("L"), dtype=np.uint8)
 
-    # Step 3: orientation detection with Tesseract OSD
+    # Step 3: Robust orientation detection with Tesseract OSD
     pil_gray = Image.fromarray(gray)
     rotation = 0
-    rot_conf = 0.0
-    # First try Tesseract OSD
+    
+    # Strip horizontal and vertical table lines so they don't confuse OSD
     try:
-        osd = pytesseract.image_to_osd(pil_gray)
-        rotation, rot_conf = _parse_osd_rotation(osd)
+        bs = int(max(gray.shape) / 50) | 1
+        bs = max(15, bs)
+        binary_for_osd = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, bs, 10)
+        
+        # Detect and remove lines
+        hor_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (40, 1))
+        hor_lines = cv2.morphologyEx(binary_for_osd, cv2.MORPH_OPEN, hor_kernel)
+        
+        ver_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 40))
+        ver_lines = cv2.morphologyEx(binary_for_osd, cv2.MORPH_OPEN, ver_kernel)
+        
+        lines = cv2.add(hor_lines, ver_lines)
+        text_only = cv2.subtract(binary_for_osd, lines)
+        
+        # Pass clean text mask (inverted back to white background) to OSD
+        clean_for_osd = cv2.bitwise_not(text_only)
+        pil_clean = Image.fromarray(clean_for_osd)
+        
+        osd = pytesseract.image_to_osd(pil_clean)
+        rotation, _ = _parse_osd_rotation(osd)
     except Exception:
-        rotation, rot_conf = 0, 0.0
+        rotation = 0
 
-    # Trust OSD if confidence is high, even if it suggests 0 rotation.
-    if rot_conf >= 30.0:
-        if rotation and rotation % 360 != 0:
-            try:
-                pil_gray = pil_gray.rotate(-rotation, expand=True)
-                gray = np.array(pil_gray)
-            except Exception:
-                pass
-    else:
-        # Confidence is low: use OCR-based selection fallback
+    # Apply the detected rotation to make the image upright
+    if rotation and rotation % 360 != 0:
         try:
-            ocr_choice = _choose_rotation_by_ocr(pil_gray)
-            if ocr_choice and ocr_choice % 360 != 0:
-                pil_gray = pil_gray.rotate(-ocr_choice, expand=True)
-                gray = np.array(pil_gray)
+            # Tesseract's 'Rotate' is the CCW angle needed to fix the image.
+            # PIL's rotate() also takes CCW angle. So we use positive rotation.
+            pil_gray = pil_gray.rotate(rotation, expand=True)
+            gray = np.array(pil_gray)
         except Exception:
             pass
 
