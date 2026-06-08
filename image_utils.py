@@ -207,8 +207,13 @@ def _choose_rotation_by_ocr(pil_img: Image.Image, conf_threshold: int = 40) -> i
                 cnt += 1
                 tot += ic
 
-        if cnt > best[1] or (cnt == best[1] and tot > best[2]):
-            best = (ang, cnt, tot)
+        # Apply a strong bias towards the original orientation (0 degrees).
+        # A rotated image must find at least 1.5x more words to be chosen.
+        score_cnt = cnt if ang == 0 else cnt / 1.5
+        score_tot = tot if ang == 0 else tot / 1.5
+
+        if score_cnt > best[1] or (score_cnt == best[1] and score_tot > best[2]):
+            best = (ang, score_cnt, score_tot)
 
     return int(best[0])
 
