@@ -115,7 +115,7 @@ def _validate_quad_angles(pts: np.ndarray, min_angle: float = 45.0, max_angle: f
     return True
 
 
-def _get_tight_content_bbox(gray: np.ndarray, min_area: int = 1000, margin: int = 50) -> Optional[Tuple[int, int, int, int]]:
+def _get_tight_content_bbox(gray: np.ndarray, min_area: int = 1000, margin: Optional[int] = None) -> Optional[Tuple[int, int, int, int]]:
     """Return a tight bounding box (x,y,w,h) around textual/content regions in a grayscale image.
 
     Uses adaptive thresholding and morphological ops to cluster text into blocks, then
@@ -125,6 +125,10 @@ def _get_tight_content_bbox(gray: np.ndarray, min_area: int = 1000, margin: int 
         return None
 
     h, w = gray.shape[:2]
+    
+    if margin is None:
+        # Dynamic margin: ~5% of the largest dimension for a comfortable border (fixes edge-to-edge look)
+        margin = max(50, int(max(h, w) * 0.05))
 
     # OpenCV-based approach: adaptive threshold + morphological grouping of text
     # Use dynamic block size for adaptive threshold to handle thick fonts in high-res images
@@ -413,26 +417,30 @@ def process_single_image(image_bgr: np.ndarray) -> Image.Image:
             pass
 
 
-    # Step 5: denoising
+    # Step 5: Flatten Illumination (Scanner Look)
     try:
-        denoised = cv2.fastNlMeansDenoising(gray, None, h=10)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
+        bg = cv2.morphologyEx(gray, cv2.MORPH_DILATE, kernel)
+        flat = cv2.divide(gray, bg, scale=255)
     except Exception:
-        denoised = gray
+        flat = gray
 
-    # Step 6: CLAHE contrast enhancement
+    # Step 6: Light CLAHE & Noise Reduction
     try:
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        contrast = clahe.apply(denoised)
+        contrast = clahe.apply(flat)
+        denoised = cv2.medianBlur(contrast, 3)
     except Exception:
-        contrast = denoised
+        denoised = flat
 
-    # Step 7: mild sharpening (unsharp mask via addWeighted)
+    # Step 7: Unsharp masking & Contrast Lift
     try:
-        blur = cv2.GaussianBlur(contrast, (0, 0), sigmaX=1.0)
-        sharpened = cv2.addWeighted(contrast, 1.5, blur, -0.5, 0)
-        final = np.clip(sharpened, 0, 255).astype("uint8")
+        blur = cv2.GaussianBlur(denoised, (0, 0), sigmaX=1.0)
+        sharpened = cv2.addWeighted(denoised, 1.6, blur, -0.6, 0)
+        sharpened = np.clip(sharpened, 0, 255).astype("uint8")
+        final = cv2.convertScaleAbs(sharpened, alpha=1.1, beta=-5)
     except Exception:
-        final = contrast
+        final = denoised
 
     # Convert to PIL grayscale image
     # Before finalizing, attempt a tight content crop to remove excess margins
