@@ -328,9 +328,10 @@ def process_single_image(image_bgr: np.ndarray) -> Image.Image:
     # Apply the detected rotation to make the image upright
     if rotation and rotation % 360 != 0:
         try:
-            # Tesseract's 'Rotate' is the CCW angle needed to fix the image.
-            # PIL's rotate() also takes CCW angle. So we use positive rotation.
-            pil_gray = pil_gray.rotate(rotation, expand=True)
+            # Tesseract's 'Rotate' is the CLOCKWISE angle needed to fix the image.
+            # PIL's rotate() takes a COUNTER-CLOCKWISE angle.
+            # So we MUST use -rotation to correctly upright the image.
+            pil_gray = pil_gray.rotate(-rotation, expand=True)
             gray = np.array(pil_gray)
         except Exception:
             pass
