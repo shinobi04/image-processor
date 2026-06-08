@@ -307,10 +307,14 @@ def process_single_image(image_bgr: np.ndarray) -> Image.Image:
         binary_for_osd = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, bs, 10)
         
         # Detect and remove lines
-        hor_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (40, 1))
+        # Scale kernel dynamically: a hardcoded 40px kernel destroys text on 300 DPI PDFs!
+        # Use 1/20th of the image size (e.g. 175px for a 3500px PDF), min 40px.
+        kernel_len = max(40, int(max(gray.shape) / 20))
+        
+        hor_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_len, 1))
         hor_lines = cv2.morphologyEx(binary_for_osd, cv2.MORPH_OPEN, hor_kernel)
         
-        ver_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 40))
+        ver_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, kernel_len))
         ver_lines = cv2.morphologyEx(binary_for_osd, cv2.MORPH_OPEN, ver_kernel)
         
         lines = cv2.add(hor_lines, ver_lines)
@@ -321,8 +325,12 @@ def process_single_image(image_bgr: np.ndarray) -> Image.Image:
         pil_clean = Image.fromarray(clean_for_osd)
         
         osd = pytesseract.image_to_osd(pil_clean)
+        osd = pytesseract.image_to_osd(pil_clean)
         rotation, _ = _parse_osd_rotation(osd)
-    except Exception:
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"OSD failed with error: {e}")
         rotation = 0
 
     # Apply the detected rotation to make the image upright
