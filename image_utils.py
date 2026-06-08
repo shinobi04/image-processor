@@ -192,7 +192,7 @@ def _choose_rotation_by_ocr(pil_img: Image.Image, conf_threshold: int = 40) -> i
         cnt = 0
         tot = 0
         for t, c in zip(texts, confs):
-            if not t or not re.search(r"\w", t):
+            if not t or len(t) < 3 or not re.search(r"\w", t):
                 continue
             try:
                 ic = int(c)
@@ -359,7 +359,7 @@ def process_single_image(image_bgr: np.ndarray) -> Image.Image:
         rotation, rot_conf = 0, 0.0
 
     # Apply OSD rotation only if confidence is reasonably high
-    if rotation and rotation % 360 != 0 and rot_conf >= 15.0:
+    if rotation and rotation % 360 != 0 and rot_conf >= 30.0:
         try:
             pil_gray = pil_gray.rotate(-rotation, expand=True)
             gray = np.array(pil_gray)
