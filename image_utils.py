@@ -115,28 +115,20 @@ def _validate_quad_angles(pts: np.ndarray, min_angle: float = 45.0, max_angle: f
     return True
 
 
-def _get_tight_content_bbox(gray: np.ndarray, min_area: int = 1000, margin: int = 50) -> Optional[Tuple[int, int, int, int]]:
-    """Return a tight bounding box (x,y,w,h) around textual/content regions in a grayscale image.
-
-    Uses adaptive thresholding and morphological ops to cluster text into blocks, then
-    returns the union bbox of sufficiently large contours. If nothing is found, returns None.
-    """
-    if gray is None or gray.size == 0:
-        return None
-
-    h, w = gray.shape[:2]
-
-    # OpenCV-based approach: adaptive threshold + morphological grouping of text
-    # Use dynamic block size for adaptive threshold to handle thick fonts in high-res images
-    bs = int(max(h, w) / 50)
-    if bs % 2 == 0:
-        bs += 1
+def _get_tight_content_bbox(img: np.ndarray) -> Optional[Tuple[int, int, int, int]]:
+    """Find a tight bounding box around the text/content in the image."""
+    h, w = img.shape
+    # Scale min_area dynamically based on image resolution
+    dynamic_min_area = (h * w) * 0.0001
+    
+    # Increase block size for large high-res images to avoid hollowing out text
+    bs = int(max(h, w) / 50) | 1
     bs = max(15, bs)
     
     try:
-        thr = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, bs, 5)
+        thr = cv2.adaptiveThreshold(img, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, bs, 10)
     except Exception:
-        _, thr = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        _, thr = cv2.threshold(img, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
     # Morph to join text into blocks (increase kernel to group headers separated by large gaps)
     kx = max(5, int(w / 100))
@@ -148,7 +140,7 @@ def _get_tight_content_bbox(gray: np.ndarray, min_area: int = 1000, margin: int 
     boxes = []
     for c in contours:
         area = cv2.contourArea(c)
-        if area < min_area:
+        if area < dynamic_min_area:
             continue
         x, y, ww, hh = cv2.boundingRect(c)
         boxes.append((x, y, x + ww, y + hh))
@@ -163,6 +155,7 @@ def _get_tight_content_bbox(gray: np.ndarray, min_area: int = 1000, margin: int 
     y2 = max(b[3] for b in boxes)
 
     # add margin and clip
+    margin = 50
     x1 = max(0, x1 - margin)
     y1 = max(0, y1 - margin)
     x2 = min(w, x2 + margin)
@@ -193,21 +186,36 @@ def detect_document_corners(image: np.ndarray) -> Optional[np.ndarray]:
     else:
         gray_small = gray
 
-    # Morphological approach to find the document mask reliably
-    binary = cv2.adaptiveThreshold(gray_small, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=3)
-    binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
+    # Robust Otsu segmentation to separate paper from background
+    blur = cv2.GaussianBlur(gray_small, (5, 5), 0)
+    _, binary = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     
-    cnts, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if cnts:
-        # Find the largest contour
-        c = max(cnts, key=cv2.contourArea)
-        poly_area = cv2.contourArea(c)
-        if poly_area >= 0.15 * (gray_small.shape[0] * gray_small.shape[1]):
-            # Use minAreaRect to get a perfect mathematical rectangle.
-            # This completely prevents the "free form" perspective stretching 
-            # that occurs when warping from irregular finger/fold points.
+    # Auto-detect background polarity by checking the 4 corners of the image.
+    # If the background (table) is dark and paper is bright, the corners will be black.
+    # If the corners are mostly white, the background is bright, so we invert it.
+    h_s, w_s = binary.shape
+    corners = [
+        binary[0:15, 0:15],
+        binary[0:15, w_s-15:w_s],
+        binary[h_s-15:h_s, 0:15],
+        binary[h_s-15:h_s, w_s-15:w_s]
+    ]
+    white_pixels = sum(cv2.countNonZero(c) for c in corners)
+    total_pixels = sum(c.size for c in corners)
+    
+    if white_pixels > total_pixels * 0.5:
+        # Background is white, invert so the document mask becomes white
+        binary = cv2.bitwise_not(binary)
+        
+    # Morphological close to seal any holes/text inside the document mask
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
+    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=3)
+
+    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if contours:
+        # Since the mask is a solid filled blob, contourArea works perfectly
+        c = max(contours, key=cv2.contourArea)
+        if cv2.contourArea(c) >= 0.15 * (h_s * w_s):
             box = cv2.boxPoints(cv2.minAreaRect(c))
             pts = np.array(box, dtype="float32")
             if resizing:
