@@ -361,8 +361,8 @@ def process_single_image(image_bgr: np.ndarray) -> Image.Image:
 
     # Step 6: Strong CLAHE contrast enhancement
     try:
-        # Increased clipLimit from 2.0 to 3.0 for punchier local contrast
-        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+        # Increased clipLimit from 3.0 to 4.0 for extremely punchy local contrast
+        clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8, 8))
         contrast = clahe.apply(denoised)
     except Exception:
         contrast = denoised
@@ -373,9 +373,9 @@ def process_single_image(image_bgr: np.ndarray) -> Image.Image:
         blur = cv2.GaussianBlur(contrast, (0, 0), sigmaX=2.0)
         sharpened = cv2.addWeighted(contrast, 2.0, blur, -1.0, 0)
         
-        # Global contrast stretch: alpha=1.3 (contrast), beta=-20 (darkens blacks)
+        # Global contrast stretch: alpha=1.6 (contrast), beta=-30 (darkens blacks)
         # This makes the background whiter and the text blacker
-        final = cv2.convertScaleAbs(sharpened, alpha=1.3, beta=-20)
+        final = cv2.convertScaleAbs(sharpened, alpha=1.6, beta=-30)
         final = np.clip(final, 0, 255).astype("uint8")
     except Exception:
         final = contrast

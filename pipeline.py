@@ -2,6 +2,8 @@ import io
 import re
 from typing import List
 
+import pytesseract
+
 from typing import Any as UploadFile
 
 from image_utils import (
@@ -16,6 +18,10 @@ class UnsupportedFileTypeError(Exception):
 
 
 class CorruptFileError(Exception):
+    pass
+
+
+class BlurryImageError(Exception):
     pass
 
 
@@ -56,6 +62,9 @@ async def process_files_to_pdf(files: List[UploadFile]) -> bytes:
 
             for img in page_images:
                 pil_page = process_single_image(img)
+                text = pytesseract.image_to_string(pil_page).strip()
+                if not text:
+                    raise BlurryImageError(f"File {filename} contains a blurry page or no readable text.")
                 processed_pages.append(pil_page)
 
         elif is_image:
@@ -65,6 +74,9 @@ async def process_files_to_pdf(files: List[UploadFile]) -> bytes:
                 raise CorruptFileError()
 
             pil_page = process_single_image(img)
+            text = pytesseract.image_to_string(pil_page).strip()
+            if not text:
+                raise BlurryImageError(f"Image {filename} is blurry or contains no readable text.")
             processed_pages.append(pil_page)
         else:
             raise UnsupportedFileTypeError()

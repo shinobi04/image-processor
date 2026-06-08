@@ -2,7 +2,7 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Response
 from typing import List
 import logging
 
-from pipeline import process_files_to_pdf, UnsupportedFileTypeError, CorruptFileError
+from pipeline import process_files_to_pdf, UnsupportedFileTypeError, CorruptFileError, BlurryImageError
 
 app = FastAPI(title="Invoice Preprocessing API")
 
@@ -22,6 +22,8 @@ async def process_invoices(files: List[UploadFile] = File(...)):
         raise HTTPException(status_code=415, detail={"error": "Unsupported file type"})
     except CorruptFileError:
         raise HTTPException(status_code=422, detail={"error": "Unable to process file"})
+    except BlurryImageError as exc:
+        raise HTTPException(status_code=400, detail={"error": str(exc)})
     except Exception as exc:  # unexpected
         logger.exception("Unexpected error while processing files")
         raise HTTPException(status_code=500, detail={"error": "Internal server error"})
