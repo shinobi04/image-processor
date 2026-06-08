@@ -232,16 +232,32 @@ def detect_document_corners(image: np.ndarray) -> Optional[np.ndarray]:
         gray_small = gray
 
     blur = cv2.GaussianBlur(gray_small, (5, 5), 0)
-    edged = cv2.Canny(blur, 50, 150)
+    
+    # Auto-Canny thresholding (based on ocr-anti)
+    median = int(np.median(blur))
+    lower = max(0, int(median * 0.66))
+    upper = min(255, int(median * 1.33))
+    edged = cv2.Canny(blur, lower, upper)
+    
+    # Dilate edges slightly to close small gaps
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    edged = cv2.dilate(edged, kernel, iterations=1)
 
-    contours, _ = cv2.findContours(edged.copy(), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(edged, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
     contours = sorted(contours, key=cv2.contourArea, reverse=True)[:10]
 
     for c in contours:
-        peri = cv2.arcLength(c, True)
+        area = cv2.contourArea(c)
+        if area < 0.05 * (h * w if not resizing else (h * scale) * (w * scale)):
+            continue
+            
+        # convexHull makes approxPolyDP immune to irregular shapes like fingers/folds
+        hull = cv2.convexHull(c)
+        peri = cv2.arcLength(hull, True)
+        
         pts = None
-        for eps_mult in [0.02, 0.03, 0.04, 0.05, 0.07, 0.10]:
-            approx = cv2.approxPolyDP(c, eps_mult * peri, True)
+        for eps_mult in [0.02, 0.03, 0.04, 0.05, 0.08]:
+            approx = cv2.approxPolyDP(hull, eps_mult * peri, True)
             if len(approx) == 4:
                 pts = approx.reshape(4, 2).astype("float32")
                 break
@@ -255,23 +271,34 @@ def detect_document_corners(image: np.ndarray) -> Optional[np.ndarray]:
             if poly_area >= 0.15 * (h * w):
                 return pts
 
-    # Fallback: try morphological large-contour -> minAreaRect
+    # Fallback: morphological approach
     try:
         small = gray_small if resizing else gray
-        thr = cv2.adaptiveThreshold(small, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 15, 10)
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
-        closed = cv2.morphologyEx(thr, cv2.MORPH_CLOSE, kernel, iterations=2)
-        cnts, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        binary = cv2.adaptiveThreshold(small, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=3)
+        binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
+        
+        cnts, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if cnts:
-            c = max(cnts, key=cv2.contourArea)
-            box = cv2.boxPoints(cv2.minAreaRect(c))
-            pts = np.array(box, dtype="float32")
-            if resizing:
-                pts = pts / scale
-            rect = _order_points(pts)
-            poly_area = 0.5 * np.abs(np.dot(rect[:, 0], np.roll(rect[:, 1], 1)) - np.dot(rect[:, 1], np.roll(rect[:, 0], 1)))
-            if poly_area >= 0.15 * (h * w):
-                return pts
+            cnts = sorted(cnts, key=cv2.contourArea, reverse=True)[:5]
+            for c in cnts:
+                hull = cv2.convexHull(c)
+                peri = cv2.arcLength(hull, True)
+                pts = None
+                for eps_mult in [0.02, 0.03, 0.05, 0.08]:
+                    approx = cv2.approxPolyDP(hull, eps_mult * peri, True)
+                    if len(approx) == 4:
+                        pts = approx.reshape(4, 2).astype("float32")
+                        break
+                
+                if pts is not None:
+                    if resizing:
+                        pts = pts / scale
+                    rect = _order_points(pts)
+                    poly_area = 0.5 * np.abs(np.dot(rect[:, 0], np.roll(rect[:, 1], 1)) - np.dot(rect[:, 1], np.roll(rect[:, 0], 1)))
+                    if poly_area >= 0.15 * (h * w):
+                        return pts
     except Exception:
         pass
 
