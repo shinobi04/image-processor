@@ -45,7 +45,7 @@ class DocumentData:
     content_type: str = ""
 
 
-async def process_documents_to_pdf(documents: List[DocumentData], check_blur: bool = True) -> bytes:
+async def process_documents_to_pdf(documents: List[DocumentData], check_blur: bool = False) -> bytes:
     """Process a list of DocumentData objects and return a single PDF (bytes).
 
     The original order is preserved. PDFs are expanded page-by-page.
