@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException, Response
+from fastapi import FastAPI, File, UploadFile, HTTPException, Response, Query
 from typing import List
 import logging
 
@@ -11,7 +11,10 @@ logger = logging.getLogger(__name__)
 
 
 @app.post("/process-invoices")
-async def process_invoices(files: List[UploadFile] = File(...)):
+async def process_invoices(
+    files: List[UploadFile] = File(...),
+    check_blur: bool = Query(True, description="Enable or disable blur and blank page detection")
+):
     """Accept multiple files (images and PDFs), process them, and return a single PDF."""
     if not files:
         raise HTTPException(status_code=400, detail={"error": "No files uploaded"})
@@ -21,7 +24,7 @@ async def process_invoices(files: List[UploadFile] = File(...)):
         for f in files:
             data = await f.read()
             documents.append(DocumentData(data=data, filename=f.filename, content_type=f.content_type))
-        pdf_bytes = await process_documents_to_pdf(documents)
+        pdf_bytes = await process_documents_to_pdf(documents, check_blur=check_blur)
     except UnsupportedFileTypeError:
         raise HTTPException(status_code=415, detail={"error": "Unsupported file type"})
     except CorruptFileError:

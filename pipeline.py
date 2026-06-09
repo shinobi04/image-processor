@@ -26,12 +26,15 @@ class BlurryImageError(Exception):
     pass
 
 
-def _process_and_ocr(img, filename):
+def _process_and_ocr(img, filename, check_blur=True):
     """Helper function to run CPU-bound processing and OCR in a separate thread."""
     pil_page = process_single_image(img)
-    text = pytesseract.image_to_string(pil_page).strip()
-    if not text:
-        raise BlurryImageError(f"Image or page from {filename} is blurry or contains no readable text.")
+    
+    if check_blur:
+        MIN_CHAR_COUNT = 10  # Adjust this to change "blur/blank page" sensitivity
+        text = pytesseract.image_to_string(pil_page).strip()
+        if not text:
+            raise BlurryImageError(f"Image or page from {filename} is blurry or contains no readable text.")
     return pil_page
 
 
@@ -42,7 +45,7 @@ class DocumentData:
     content_type: str = ""
 
 
-async def process_documents_to_pdf(documents: List[DocumentData]) -> bytes:
+async def process_documents_to_pdf(documents: List[DocumentData], check_blur: bool = True) -> bytes:
     """Process a list of DocumentData objects and return a single PDF (bytes).
 
     The original order is preserved. PDFs are expanded page-by-page.
@@ -98,7 +101,7 @@ async def process_documents_to_pdf(documents: List[DocumentData]) -> bytes:
     batch_size = 15
     for i in range(0, len(raw_images_to_process), batch_size):
         batch = raw_images_to_process[i:i + batch_size]
-        tasks = [asyncio.to_thread(_process_and_ocr, img, fname) for img, fname in batch]
+        tasks = [asyncio.to_thread(_process_and_ocr, img, fname, check_blur) for img, fname in batch]
         # Await the batch; gather preserves the original order
         results = await asyncio.gather(*tasks)
         processed_pages.extend(results)
