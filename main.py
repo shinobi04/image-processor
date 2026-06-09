@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 @app.post("/process-invoices")
 async def process_invoices(
     files: List[UploadFile] = File(...),
-    check_blur: bool = Query(True, description="Enable or disable blur and blank page detection")
+    check_blur: bool = Query(False, description="Enable or disable blur and blank page detection")
 ):
     """Accept multiple files (images and PDFs), process them, and return a single PDF."""
     if not files:
