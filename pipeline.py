@@ -5,7 +5,7 @@ from typing import List
 
 import pytesseract
 
-from typing import Any as UploadFile
+from dataclasses import dataclass
 
 from image_utils import (
     load_image_from_bytes,
@@ -35,18 +35,25 @@ def _process_and_ocr(img, filename):
     return pil_page
 
 
-async def process_files_to_pdf(files: List[UploadFile]) -> bytes:
-    """Process a list of UploadFile objects and return a single PDF (bytes).
+@dataclass
+class DocumentData:
+    data: bytes
+    filename: str = ""
+    content_type: str = ""
 
-    The original upload order is preserved. PDFs are expanded page-by-page.
+
+async def process_documents_to_pdf(documents: List[DocumentData]) -> bytes:
+    """Process a list of DocumentData objects and return a single PDF (bytes).
+
+    The original order is preserved. PDFs are expanded page-by-page.
     """
     raw_images_to_process = []  # list of tuples: (np.ndarray, filename)
 
-    for upload in files:
-        filename = upload.filename or ""
-        content_type = (upload.content_type or "").lower()
+    for doc in documents:
+        filename = doc.filename or ""
+        content_type = (doc.content_type or "").lower()
 
-        data = await upload.read()
+        data = doc.data
         if not data:
             raise CorruptFileError()
 
