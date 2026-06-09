@@ -1,10 +1,19 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException, Response, Query
+from fastapi.middleware.cors import CORSMiddleware
 from typing import List
 import logging
 
 from pipeline import process_documents_to_pdf, DocumentData, UnsupportedFileTypeError, CorruptFileError, BlurryImageError
 
 app = FastAPI(title="Invoice Preprocessing API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins (including ngrok and local frontends)
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
